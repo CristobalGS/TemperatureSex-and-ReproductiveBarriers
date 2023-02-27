@@ -7,7 +7,7 @@ bioRxiv: https://doi.org/10.1101/2023.02.12.528219
 
 All analyes and visualizations are in the R notebook "Data modelling and plotting.Rmd"
 
-Files:
+Other input/intermediate files:
 
 - Raw data.xlsx -> raw data as collected in the lab
 - success.binary.csv -> all data combined across blocks and life stages and converted from proportion to binary format for modelling
