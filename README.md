@@ -13,5 +13,3 @@ Other input/intermediate files:
 - success.binary.csv -> all data combined across blocks and life stages and converted from proportion to binary format for modelling
 - success.binary.fit3b.rds -> R object with final model fitted with lme4::glmer
 - latlong.csv -> latitude and longitude of sampling sites for tests of spatial autocorrelation
-
-*All files will be available upon publication in peer-reviewed journal.
