@@ -1,0 +1,707 @@
+---
+title: "Temperature, sex, and reproductive barriers"
+output: html_notebook
+---
+
+# Intial setups
+```{r}
+# Load libraries
+library(lme4) # GLMM
+library(car) # Wald Chi^2 test (Anova)
+library(DHARMa) # Model diagnostics
+#library(xlsx) # Read xlsx files
+library(openxlsx) # Read xlsx files MAC
+#library(plyr) #mapvalues function
+library(emmeans) # Pairwise comparisons
+library(ggeffects) #ggpredict, ggeffect
+library(ggplot2)
+library(lemon)
+library(tidyverse)
+library(lattice)
+library(broom.mixed)
+library(ggstance)
+library(merTools)
+
+# set contrasts for session (always do this)
+options(contrasts = c("contr.sum", "contr.poly"))
+
+# handy preview file for ggsave() (from here: https://gist.github.com/tjmahr/1dd36d78ecb3cff10baf01817a56e895)
+ggpreview <- function(...) {
+  fname <- tempfile(fileext = ".png")
+  ggsave(filename = fname, ...)
+  system2("open", fname)
+  invisible(NULL)
+}
+
+# Function to check for overdispersion (this is an approximate estimate of an overdispersion parameter) (from here: https://bbolker.github.io/mixedmodels-misc/glmmFAQ.html#tests-of-effects-i.e.-testing-that-several-parameters-are-simultaneously-zero)
+overdisp_fun <- function(model) {
+  rdf <- df.residual(model)
+  rp <- residuals(model,type="pearson")
+  Pearson.chisq <- sum(rp^2)
+  prat <- Pearson.chisq/rdf
+  pval <- pchisq(Pearson.chisq, df=rdf, lower.tail=FALSE)
+  c(chisq=Pearson.chisq,ratio=prat,rdf=rdf,p=pval)
+}
+```
+
+# Read in and prepare data for modelling
+
+# 1) Fertilization success (fs)
+```{r}
+# Read in fs data
+#fs.df <- read.xlsx("Raw data.xlsx", sheetIndex = 1, rowIndex = 1:481, colIndex = 1:13)
+fs.df <- read.xlsx("Raw data.xlsx", sheet = 1, rows = 1:481, cols = 1:13)
+names(fs.df) <- c("vial", "blA", "blB", "cross", "p1fem", "p2mal", "species", "temp", "rep", "id.long", "scored", "fert", "fs")
+
+# Nest block B in block A
+fs.df$blB <- paste0(fs.df$blA, fs.df$blB)
+
+# Get rid of id.long and rep columns
+fs.df <- subset(fs.df, select = -c(rep, id.long))
+
+# scale and center temp
+fs.df$temp.t <- (fs.df$temp - mean(fs.df$temp))/sd(fs.df$temp)
+
+# Add species2 variable (doesn't distinguish direciton of the cross)
+fs.df$species2 <- sapply(strsplit(fs.df$species, "_"), "[", 1)
+
+# Add cross 2 variable (doesn't distinguish direciton of the cross)
+fs.df$cross2 <- plyr::mapvalues(fs.df$cross, from = c("P03xP01", "P03xP02", "P04xP01", "P04xP02", "P07xP05", "P07xP06", "P08xP05", "P08xP06", "P11xP09", "P11xP10", "P12xP09", "P12xP10"), to = c("P01xP03", "P02xP03", "P01xP04", "P02xP04", "P05xP07", "P06xP07", "P05xP08", "P06xP08", "P09xP11", "P10xP11", "P09xP12", "P10xP12"))
+
+# Re-order columns
+fs.df <- fs.df[ , c(1:4, 14, 5:7, 13, 8, 12, 9:11)]
+```
+
+# 2) Embryo survival (es)
+```{r}
+# Read in es data
+#es.df <- read.xlsx("Raw data.xlsx", sheetIndex = 2, rowIndex = 1:481, colIndex = 1:13)
+es.df <- read.xlsx("Raw data.xlsx", sheet = 2, rows = 1:481, cols = 1:13)
+names(es.df) <- c("vial", "blA", "blB", "cross", "p1fem", "p2mal", "species", "temp", "rep", "id.long", "scored", "alive", "es")
+
+# Nest block B in block A
+es.df$blB <- paste0(es.df$blA, es.df$blB)
+
+# Get rid of id.long and rep columns
+es.df <- subset(es.df, select = -c(rep, id.long))
+
+# scale and center temp
+es.df$temp.t <- (es.df$temp - mean(es.df$temp))/sd(es.df$temp)
+
+# Add species2 variable (doesn't distinguish direciton of the cross)
+es.df$species2 <- sapply(strsplit(es.df$species, "_"), "[", 1)
+
+# Add cross 2 variable (doesn't distinguish direciton of the cross)
+es.df$cross2 <- plyr::mapvalues(es.df$cross, from = c("P03xP01", "P03xP02", "P04xP01", "P04xP02", "P07xP05", "P07xP06", "P08xP05", "P08xP06", "P11xP09", "P11xP10", "P12xP09", "P12xP10"), to = c("P01xP03", "P02xP03", "P01xP04", "P02xP04", "P05xP07", "P06xP07", "P05xP08", "P06xP08", "P09xP11", "P10xP11", "P09xP12", "P10xP12"))
+
+# Re-order columns
+es.df <- es.df[ , c(1:4, 14, 5:7, 13, 8, 12, 9:11)]
+```
+
+# 3) Larval survival (ls)
+```{r}
+# Read in ls data
+#ls.df <- read.xlsx("Raw data.xlsx", sheetIndex = 3, rowIndex = 1:601, colIndex = 1:13)
+ls.df <- read.xlsx("Raw data.xlsx", sheet = 3, rows = 1:601, cols = 1:13)
+names(ls.df) <- c("vial", "blA", "blB", "cross", "p1fem", "p2mal", "species", "temp", "rep", "id.long", "scored", "alive", "ls")
+
+# Nest block B in block A
+ls.df$blB <- paste0(ls.df$blA, ls.df$blB)
+
+# Get rid of id.long and rep columns
+ls.df <- subset(ls.df, select = -c(rep, id.long))
+
+# scale and center temp
+ls.df$temp.t <- (ls.df$temp - mean(ls.df$temp))/sd(ls.df$temp)
+
+# Add species2 variable (doesn't distinguish direciton of the cross)
+ls.df$species2 <- sapply(strsplit(ls.df$species, "_"), "[", 1)
+
+# Add cross 2 variable (doesn't distinguish direciton of the cross)
+ls.df$cross2 <- plyr::mapvalues(ls.df$cross, from = c("P03xP01", "P03xP02", "P04xP01", "P04xP02", "P07xP05", "P07xP06", "P08xP05", "P08xP06", "P11xP09", "P11xP10", "P12xP09", "P12xP10"), to = c("P01xP03", "P02xP03", "P01xP04", "P02xP04", "P05xP07", "P06xP07", "P05xP08", "P06xP08", "P09xP11", "P10xP11", "P09xP12", "P10xP12"))
+
+# Re-order columns
+ls.df <- ls.df[ , c(1:4, 14, 5:7, 13, 8, 12, 9:11)]
+```
+
+# Combine all data to model life stages
+```{r}
+success <- fs.df
+success <- cbind(success[ , 1:9], life_stage = rep("fertilization", nrow(success)), success[ , 10:14])
+success$vial <- paste0("fs.", success$vial)
+names(success)[13:14] <- c("scored", "successful")
+success <- subset(success, select = -c(fs))
+
+dummy <- es.df
+dummy <- cbind(dummy[ , 1:9], life_stage = rep("embryo", nrow(dummy)), dummy[ , 10:14])
+dummy$vial <- paste0("es.", dummy$vial)
+names(dummy)[13:14] <- c("scored", "successful")
+dummy <- subset(dummy, select = -c(es))
+success <- rbind(success, dummy)
+
+dummy <- ls.df
+dummy <- cbind(dummy[ , 1:9], life_stage = rep("larvae", nrow(dummy)), dummy[ , 10:14])
+dummy$vial <- paste0("ls.", dummy$vial)
+names(dummy)[13:14] <- c("scored", "successful")
+dummy <- subset(dummy, select = -c(ls))
+success <- rbind(success, dummy)
+
+success$temp.t <- (success$temp - mean(success$temp))/sd(success$temp)
+success <- cbind(ID = 1:nrow(success), success)
+```
+
+# Convert to binary format for binary models
+```{r}
+success <- success[complete.cases(success), ]
+success.binary <- data.frame()
+dummydf <- data.frame()
+individualID.start <- 1
+for(i in 1:nrow(success)){
+  dummydf <- do.call("rbind", replicate(success[i, "scored"], success[i, c(1:13)], simplify = F))
+  individualID.end <- success[i, "scored"] + individualID.start - 1
+  dummydf$ID <- individualID.start:individualID.end
+  individualID.start <- 1 + individualID.end
+  dummydf$successful <- c(rep(1, success[i, "successful"]), rep(0, (success[i, "scored"]-success[i, "successful"])))
+  success.binary <- rbind(success.binary, dummydf)
+}
+
+# write.csv(success.binary, "success.binary.csv")
+```
+
+# Read in binary data (you can start here after first run)
+```{r}
+success.binary <- read_csv("success.binary.csv", col_names=TRUE, na='NA')
+spec(success.binary)
+
+success.binary <- read_csv("success.binary.csv", col_names=TRUE, na='NA',
+                      col_types = list(
+                        ID = col_factor(),
+                        vial = col_factor(),
+                        blA = col_factor(),
+                        blB = col_factor(),
+                        cross = col_factor(),
+                        cross2 = col_factor(),
+                        p1fem = col_factor(),
+                        p2mal = col_factor(),
+                        species = col_factor(),
+                        species2 = col_factor(),
+                        life_stage = col_factor(),
+                        temp = col_double(),
+                        temp.t = col_double(),
+                        successful = col_integer()))
+
+nlevels(success.binary$cross)
+nlevels(success.binary$vial)
+nlevels(success.binary$blA)
+nlevels(success.binary$blB)
+```
+
+# Modelling data
+```{r}
+# success.bin.fit <- glmer(cbind(successful, scored-successful) ~ 1
+#                      + poly(temp.t, 2, raw = TRUE)*life_stage*species
+#                      + (1|cross)
+#                      + (1|blB)
+#                      + (1|vial)
+#                      , data = success
+#                      , family = binomial(link = "logit")
+#                      , control = glmerControl(optimizer = "bobyqa", optCtrl = list(maxfun = 2e8)))
+
+# uncorrelated intercepts and slopes for 'crosses'
+# success.bin.fit2 <- glmer(successful ~ 1
+#                      + poly(temp.t, 2, raw = TRUE)*life_stage*species #SPECIES IS CROSS
+#                      + (temp.t||cross) #CROSS IS POP (SORT OF)
+#                      + (1|blB)
+#                      + (1|vial)
+#                      , data = success.binary
+#                      , family = binomial(link = "logit")
+#                      , control = glmerControl(optimizer = "bobyqa", optCtrl = list(maxfun = 2e8)))
+# saveRDS(success.bin.fit2, "success.bin.fit2")
+
+# correlated intercepts and slopes for 'crosses'
+# success.bin.fit3 <- glmer(successful ~ 1
+#                      + poly(temp.t, 2, raw = TRUE)*life_stage*species #SPECIES IS CROSS
+#                      + (temp.t|cross) #CROSS IS POP (SORT OF)
+#                      + (1|blB)
+#                      + (1|vial)
+#                      , data = success.binary
+#                      , family = binomial(link = "logit")
+#                      , control = glmerControl(optimizer = "bobyqa", optCtrl = list(maxfun = 2e8)))
+# saveRDS(success.bin.fit3, "success.bin.fit2")
+
+# uncorrelated intercepts, slopes, and curvature for 'crosses' (singular fit but converges)
+# success.bin.fit4 <- glmer(successful ~ 1
+#                      + poly(temp.t, 2, raw = TRUE)*life_stage*species #SPECIES IS CROSS
+#                      + (temp.t+I(temp.t^2)||cross) #CROSS IS POP (SORT OF)
+#                      + (1|blB)
+#                      + (1|vial)
+#                      , data = success.binary
+#                      , family = binomial(link = "logit")
+#                      , control = glmerControl(optimizer = "bobyqa", optCtrl = list(maxfun = 2e8)))
+# saveRDS(success.bin.fit4, "success.bin.fit4")
+
+# correlated intercepts, slopes, and curvature for 'crosses' (singular fit but converges)
+# success.bin.fit5 <- glmer(successful ~ 1
+#                      + poly(temp.t, 2, raw = TRUE)*life_stage*species #SPECIES IS CROSS
+#                      + (temp.t+I(temp.t^2)|cross) #CROSS IS POP (SORT OF)
+#                      + (1|blB)
+#                      + (1|vial)
+#                      #+ (1|ID)
+#                      , data = success.binary
+#                      , family = binomial(link = "logit")
+#                      , control = glmerControl(optimizer = "bobyqa", optCtrl = list(maxfun = 2e8)))
+# saveRDS(success.bin.fit5, "success.bin.fit5")
+
+# summary(success.bin.fit)
+# residuals.bin <- simulateResiduals(success.bin.fit, n = 1000, plot = TRUE) #ok
+# Anova(success.bin.fit, type = 3)
+# 
+# summary(success.bin.fit2)
+# residuals.bin <- simulateResiduals(success.bin.fit2, n = 1000, plot = TRUE) #ok
+# Anova(success.bin.fit2, type = 3)
+# 
+# summary(success.bin.fit3)
+# residuals.bin <- simulateResiduals(success.bin.fit3, n = 1000, plot = TRUE) #ok
+# Anova(success.bin.fit3, type = 3) #can use this -- more rigorous and no loss of power based on Anova table
+# 
+# summary(success.bin.fit4)
+# residuals.bin <- simulateResiduals(success.bin.fit4, n = 1000, plot = TRUE) #ok
+# Anova(success.bin.fit4, type = 3) 
+# 
+# summary(success.bin.fit5)
+# residuals.bin <- simulateResiduals(success.bin.fit5, n = 1000, plot = TRUE) #ok
+# Anova(success.bin.fit5, type = 3)
+
+# anova(success.bin.fit, success.bin.fit2, success.bin.fit3)
+
+#                   npar   AIC   BIC logLik deviance  Chisq Df Pr(>Chisq)
+# success.bin.fit    39 70982 71333 -35452    70904
+# success.bin.fit2   40 70975 71335 -35448    70895 9.3735  1   0.002201 **
+# success.bin.fit3   41 70976 71345 -35447    70894 0.9070  1   0.340924
+
+
+# Model fit is improved by letting linear effects of temperature vary among crosses. It doesn't matter whether or not intercepts and slopes are correlated.
+
+# anova(success.bin.fit, success.bin.fit3, success.bin.fit5)
+
+
+#                  npar   AIC   BIC logLik deviance  Chisq Df Pr(>Chisq)
+# success.bin.fit2   40 70975 71335 -35448    70895
+# success.bin.fit5   44 70980 71376 -35446    70892 2.7385  4     0.6025
+
+# Model fit isn't improved by letting quadratic effects of temperature vary among crosses. It doesn't matter whether or not intercepts and slopes are correlated.
+
+# Same as success.bin.fit3, just different syntax
+# success.bin.fit3b <- glmer(successful ~ 1
+#                      + (temp.t + I(temp.t^2))*life_stage*species #SPECIES IS CROSS
+#                      + (temp.t|cross) #CROSS IS POP (SORT OF)
+#                      + (1|blB)
+#                      + (1|vial)
+#                      , data = success.binary
+#                      , family = binomial(link = "logit")
+#                      , control = glmerControl(optimizer = "bobyqa", optCtrl = list(maxfun = 2e8)))
+#
+# saveRDS(success.bin.fit3b, "success.bin.fit3b.rds")
+
+success.bin.fit3b <- readRDS("success.bin.fit3b.rds")
+summary(success.bin.fit3b)
+residuals.bin <- simulateResiduals(success.bin.fit3b, n = 1000, plot = TRUE) #ok
+Anova(success.bin.fit3b, type = 3)
+# anova(success.bin.fit3b, success.bin.fit3) #same
+```
+
+# Predict and plot curves, with raw data points added to plot
+```{r}
+# Predicted curves for each species and life stage
+pred.success <- ggeffect(success.bin.fit3b, terms = c("species[all]", "temp.t[-1.316642:1.444059 by = 0.05]", "life_stage[all]"), ci.lvl = 0.95, type = "fe")
+pred.success$group <- as.numeric(levels(pred.success$group))[pred.success$group] * sd(success$temp) + mean(success$temp)
+names(pred.success)[c(1, 6:7)] <- c("species", "temp", "life_stage")
+pred.success$life_stage <- factor(pred.success$life_stage, levels = c("fertilization", "embryo", "larvae"))
+pred.success$species <- factor(pred.success$species, levels = c("caespitosa", "gemineoa", "hybrid_c", "hybrid_g"))
+success.binary$species <- factor(success.binary$species, levels = c(c("caespitosa", "gemineoa", "hybrid_c", "hybrid_g")))
+
+stage.labs <- c("A) Fertilization", "B) Embryogenesis", "C) Larval Development")
+names(stage.labs) <- c("fertilization", "embryo", "larvae")
+legend.labels <- c(expression(italic("G. caespitosa")~x~italic("G. caespitosa")), expression(italic("G. gemineoa")~x~italic("G. gemineoa")), expression(italic("G. caespitosa")~x~italic("G. gemineoa")), expression(italic("G. gemineoa")~x~italic("G. caespitosa")))
+
+curvesANDpoints <- ggplot(pred.success, aes(x = temp, y = predicted, colour = species, fill = species)) +
+  geom_line(size = 1, aes(colour = species)) +
+  geom_ribbon(aes(ymin = conf.low, ymax = conf.high), alpha = 0.2, linetype = 0) +
+  facet_rep_wrap(. ~ life_stage, labeller = labeller(life_stage = stage.labs)) +
+  ylim(-0.1, 1.1) +
+  scale_colour_manual(name = "Cross (eggs x sperm)", labels = legend.labels, values = c("darkblue", "darkred", "skyblue", "lightpink2")) +
+    scale_fill_manual(name = "Cross (eggs x sperm)", labels = legend.labels, values = c("darkblue", "darkred", "skyblue", "lightpink2")) +
+  labs(x = expression("Temperature " ( degree*C)), y = "Predicted probability of success") +
+  scale_y_continuous(breaks = c(0, 0.25, 0.5, 0.75, 1)) +
+  scale_x_continuous(breaks = c(12, 15, 17, 22, 25)) +
+  theme_classic() +
+  theme(panel.border = element_blank(),
+        axis.line = element_line(),
+        strip.background = element_blank(),
+        strip.text = element_text(vjust = 0, hjust = 0), #align strip text
+        strip.text.x = element_text(size = 8, hjust = 0),
+        axis.title = element_text(size = 8), # axis titles
+        axis.text = element_text(size = 6),
+        legend.text.align = 0,
+        legend.text = element_text(size = 6),
+        legend.title = element_text(size = 7),
+        legend.key.width = unit(0.7, "line"),
+        legend.key.height = unit(0.6, "line"),
+        legend.box.margin = margin(t = 0, r = 0, b = 0, l = -2),
+        legend.margin = margin(t = 0, r = 0, b = 0, l = -2),
+        panel.spacing.x = unit(-0.6, "lines")) +
+  geom_jitter(inherit.aes = FALSE, data = success.binary, aes(x = temp, y = successful, colour = species, fill = species),
+              shape = 20, alpha = 0.07, size = 0.2, position = position_jitterdodge(jitter.height = 0.03, dodge.width = 1.8, jitter.width = 1.2))
+# shape = 1, alpha = 0.035, size = 0.4, stroke = 0.02 / shape = 20, alpha = 0.07, size = 0.2
+curvesANDpoints
+```
+
+# Post-hoc tests and plot
+```{r}
+success.bin.fit3b <- readRDS("success.bin.fit3b.rds")
+Anova(success.bin.fit3b, type = 3)
+
+# Pairwise comparisons
+
+# contrasts <- emtrends(success.bin.fit, pairwise ~ species|life_stage, var = "temp.t", type="response", adjust = "fdr", max.degree = 2) #, simple = "each", combine = TRUE
+
+# The one above reduces comparisons (thus increasing power) by only comparing species within life stages and nothing else, but they both give pretty much the same results
+contrasts <- emtrends(success.bin.fit, pairwise ~ species*life_stage, var = "temp.t", type="response", adjust = "fdr", max.degree = 2, simple = "each", combine = TRUE)
+contrasts
+
+# plot(contrasts, comparisons = TRUE, type="response", adjust = "fdr") +
+#   facet_grid(degree ~ life_stage, scales = "free_y")
+
+emms <- plot(contrasts, comparisons = TRUE, type="response", adjust = "fdr", plotit = FALSE)
+emms$life_stage <- factor(emms$life_stage, levels = c("fertilization", "embryo", "larvae"))
+emms$species <- factor(emms$species, levels = rev(c("caespitosa", "gemineoa", "hybrid_c", "hybrid_g")))
+# emms$degree <- factor(emms$degree, levels = c("quadratic", "linear"))
+emms$lcmpl[is.na(emms$lcmpl)] <- emms$the.emmean[is.na(emms$lcmpl)]
+emms$rcmpl[is.na(emms$rcmpl)] <- emms$the.emmean[is.na(emms$rcmpl)]
+
+# Contrasts of mean performance
+means <- emmeans(success.bin.fit, pairwise ~ species|life_stage, adjust = "fdr", simple = "each", combine = TRUE, type="response")
+# plot(means, comparisons = TRUE)
+means.df <- plot(means, comparisons = TRUE, type="response", adjust = "fdr", plotit = FALSE)
+means.df$lcmpl[is.na(means.df$lcmpl)] <- means.df$the.emmean[is.na(means.df$lcmpl)]
+means.df$rcmpl[is.na(means.df$rcmpl)] <- means.df$the.emmean[is.na(means.df$rcmpl)]
+
+# Add means to contrasts data frame
+means.df <- cbind(means.df[ , 1:2], degree = "mean", means.df[ , 3:10])
+emms <- rbind(emms, means.df)
+emms$degree <- factor(emms$degree, levels = c("mean", "linear", "quadratic"))
+
+# Plot means, linear, and quadratic trends
+stage.labs <- c("Fertilization", "Embryogenesis", "Larval Development")
+names(stage.labs) <- c("fertilization", "embryo", "larvae")
+degree.labs <- c("Mean performances", "Linear trends", "Quadratic trends")
+names(degree.labs) <- c("mean", "linear", "quadratic")
+sp.labels <- c(expression(paste(italic("G. gemineoa"), " x ", italic("G. caespitosa"))),
+               expression(paste(italic("G. caespitosa"), " x ", italic("G. gemineoa"))),
+               expression(paste(italic("G. gemineoa"), " x ", italic("G. gemineoa"))),
+               expression(paste(italic("G. caespitosa"), " x ", italic("G. caespitosa"))))
+# sp.labels <- c(expression(paste(italic("G"), " x ", italic("C"))),
+#                expression(paste(italic("C"), " x ", italic("G"))),
+#                expression(paste(italic("G"), " x ", italic("G"))),
+#                expression(paste(italic("C"), " x ", italic("C"))))
+# sp.labels <- c("hyb_g", "hyb_c", "gem", "caes")
+
+# Panel letters
+dat_text <- data.frame(
+  label = c("A)", "D)", "G)","B)", "E)", "H)", "C)", "F)", "I)"),
+  degree = rep(c("mean", "linear", "quadratic"), 3),
+  life_stage = c(rep("fertilization", 3), rep("embryo", 3), rep("larvae", 3)),
+  x = c(rep(-0.4, 3), rep(-0.88, 6)), #x = rep(c(-0.55, -0.9), 3),
+  y = rep(4.4, 9)) #y = rep(4.4, 6))
+dat_text$degree <- factor(dat_text$degree, levels = c("mean", "linear", "quadratic"))
+dat_text$life_stage <- factor(dat_text$life_stage, levels = c("fertilization", "embryo", "larvae"))
+
+# Level lower case letters to show statistical results
+stats_letters <- data.frame(
+  label = c("a", "a", "a,b", "b", rep("a", 12), "a", "a,b", "a", "b", rep("a", 4), "a", rep("b", 3), "a", "b", "c", "b", rep("a", 4)), # 9x4 = 36
+  degree = rep(c(rep("mean", 4), rep("linear", 4), rep("quadratic", 4)), 3),     
+  life_stage = c(rep("fertilization", 12), rep("embryo", 12), rep("larvae", 12)),
+  x = c(rep(0.76, 12), rep(0.9, 12), rep(1.2, 12)),
+  y = rep(c(4:1), 9))
+stats_letters$degree <- factor(stats_letters$degree, levels = c("mean", "linear", "quadratic"))
+stats_letters$life_stage <- factor(stats_letters$life_stage, levels = c("fertilization", "embryo", "larvae"))
+
+
+library(RgoogleMaps)
+cols <- rep(AddAlpha(c("darkblue", "darkred", "skyblue", "lightpink2"), 0.5), 9)
+
+gg_emms <- ggplot(emms, aes(x = the.emmean, y = species)) +
+  facet_rep_grid(degree ~ life_stage, scales = "free_x", labeller = labeller(life_stage = stage.labs, degree = degree.labs), repeat.tick.labels = FALSE) +
+  geom_errorbar(aes(xmin = asymp.LCL, xmax = asymp.UCL), width = 0, size = 3, colour = cols) + #rgb(0, 0, 1, 0.2)
+  geom_point() +
+  geom_vline(xintercept = 0, lty = 2, col = "red") +
+  geom_errorbar(aes(xmin = lcmpl, xmax = rcmpl), colour = "black", width = 0, size= 0.5) +
+  labs(x = "Estimate and 95% confidence interval", y = "Cross") +
+  scale_y_discrete("Cross", labels = sp.labels) +
+  geom_text(data = dat_text, mapping = aes(x = x, y = y, label = label), size = 3) +
+  geom_text(data = stats_letters, mapping = aes(x = x, y = y, label = label), size = 2.8) +
+  theme_classic() +
+    theme(panel.border = element_blank(),
+        axis.line = element_line(),
+        strip.background = element_blank(),
+        strip.text = element_text(size = 9, vjust = 0, hjust = 0), #align strip text
+        strip.text.x = element_text(hjust = 0),
+        axis.title = element_text(size = 10), # axis titles
+        axis.text = element_text(size = 8),
+        legend.text.align = 0,
+        legend.position = "none",
+        panel.spacing.x = unit(-7, "lines"))
+gg_emms
+```
+
+# Plot curves for each population by species using merTools package to get confidence intervals of random effects (populations) only
+```{r}
+# New data to predict
+caes_pops <- c("P01xP01", "P02xP02", "P05xP05", "P06xP06", "P09xP09", "P10xP10")
+gem_pops <- c("P03xP03", "P04xP04", "P07xP07", "P08xP08", "P11xP11", "P12xP12")
+newdata_caes <- expand.grid(temp.t = seq(-1.316642, 1.444059, by = 0.05), 
+                       species = c("caespitosa"), 
+                       life_stage = c("fertilization", "embryo", "larvae"),
+                       cross = caes_pops,
+                       blB = "blB",
+                       vial = "vial")
+newdata_gem <- expand.grid(temp.t = seq(-1.316642, 1.444059, by = 0.05), 
+                            species = c("gemineoa"), 
+                            life_stage = c("fertilization", "embryo", "larvae"),
+                            cross = gem_pops,
+                            blB = "blB",
+                            vial = "vial")
+newdata <- rbind(newdata_caes, newdata_gem)
+
+# Predict twice: one to get predicted estimates (curves), then to get only random confidence intervals
+modelFit <- success.bin.fit3b
+# modelFit <- success.bin.fit5
+predictions1 <- predictInterval(modelFit, newdata = newdata, level = 0.8, type = "probability", include.resid.var = FALSE, which = "full")
+predictions2 <- predictInterval(modelFit, newdata = newdata, level = 0.8, type = "probability", include.resid.var = FALSE, which = "random")
+predictions <- predictions1
+
+# Replace intervals around curve with intervals for random effects only
+predictions$lwr <- predictions$fit - (predictions2$fit - predictions2$lwr)
+predictions$upr <- predictions$fit + (predictions2$upr - predictions2$fit)
+
+# Add predictions to new data frame
+pred.success <- cbind(newdata, predictions)
+
+# Convert temperature back to original scale
+pred.success$temp <- pred.success$temp.t * sd(success$temp) + mean(success$temp)
+
+# Life stage labels for plotting
+stage.labs <- c("A) Fertilization", "B) Embryo development", "C) Larval Development")
+names(stage.labs) <- c("fertilization", "embryo", "larvae")
+
+# Replace pop numbers with names
+library(plyr)
+pures <- c("P01xP01", "P02xP02", "P03xP03", "P04xP04", "P05xP05", "P06xP06",
+           "P07xP07", "P08xP08", "P09xP09", "P10xP10", "P11xP11", "P12xP12")
+df <- success.binary[ , c("cross", "species")]
+df <- df %>% distinct()
+df <- df[df$cross %in% pures, ]
+df$pop_name <- c("Cape Otway", "Walkerville", "Red Bluff", "Mallacoota", "Lorne", "Flinders",
+                 "Salmon Rocks", "Tathra", "YCW Beach", "Eagles Nest", "Greenglades", "Merimbula")
+pred.success$cross <- mapvalues(pred.success$cross, from = df$cross, to = df$pop_name)
+names(pred.success)[4] <- "Population"
+
+# Life stage labels for plotting
+stage.labs <- c("A) Fertilization", "B) Embryogenesis", "C) Larval Development")
+names(stage.labs) <- c("fertilization", "embryo", "larvae")
+
+# Plot curves - caespitosa
+caes_pops <- ggplot(pred.success[pred.success$species == "caespitosa", ], aes(x = temp, y = fit, colour = Population, group = Population, fill = Population)) +
+  geom_line(size = 1.2) +
+  geom_line(size = 0.3, colour = "black", alpha = 0.5, aes(linetype = Population)) +
+  geom_ribbon(aes(ymin = lwr, ymax = upr), alpha = 0.1, linetype = 0) +
+  facet_rep_wrap(. ~ life_stage, labeller = labeller(life_stage = stage.labs), scales = "free_y") +
+  labs(x = "", y = "Predicted probability of success") +
+  scale_color_brewer(palette = "Blues") +
+  scale_fill_brewer(palette = "Blues") +
+  theme_classic() +
+  ylim(c(0, 1)) +
+  ggtitle(expression(italic("G. caespitosa"))) +
+  scale_linetype_manual(values = c("dotted", "twodash", "solid", "longdash", "dotdash", "dashed")) +
+  theme(panel.border = element_blank(),
+        axis.line = element_line(),
+        strip.background = element_blank(),
+        strip.text = element_text(vjust = 0, hjust = 0), #align strip text
+        strip.text.x = element_text(size = 9, hjust = 0),
+        axis.title = element_text(size = 10), # axis titles
+        axis.text = element_text(size = 8),
+        legend.text.align = 0,
+        plot.title = element_text(hjust = 0.5))
+caes_pops
+
+# Plot curves - gemineoa
+
+stage.labs <- c("D) Fertilization", "E) Embryogenesis", "F) Larval Development")
+names(stage.labs) <- c("fertilization", "embryo", "larvae")
+
+gem_pops <- ggplot(pred.success[pred.success$species == "gemineoa", ], aes(x = temp, y = fit, colour = Population, group = Population, fill = Population)) +
+  geom_line(size = 1.2) +
+  geom_line(size = 0.3, colour = "black", alpha = 0.5, aes(linetype = Population)) +
+  geom_ribbon(aes(ymin = lwr, ymax = upr), alpha = 0.1, linetype = 0) +
+  facet_rep_wrap(. ~ life_stage, labeller = labeller(life_stage = stage.labs), scales = "free_y") +
+  labs(x = expression("Temperature " ( degree*C)), y = "Predicted probability of success") +
+  scale_color_brewer(palette = "Reds") +
+  scale_fill_brewer(palette = "Reds") +
+  theme_classic() +
+  ylim(c(0, 1)) +
+  ggtitle(expression(italic("G. gemineoa"))) +
+  scale_linetype_manual(values = c("dotted", "twodash", "solid", "longdash", "dotdash", "dashed")) +
+  theme(panel.border = element_blank(),
+        axis.line = element_line(),
+        strip.background = element_blank(),
+        strip.text = element_text(vjust = 0, hjust = 0), #align strip text
+        strip.text.x = element_text(size = 9, hjust = 0),
+        axis.title = element_text(size = 10), # axis titles
+        axis.text = element_text(size = 8),
+        legend.text.align = 0,
+        plot.title = element_text(hjust = 0.5))
+gem_pops
+
+## Combine both plots into single figure
+library(ggpubr)
+pops.gg <- ggarrange(caes_pops, gem_pops,
+                     ncol = 1, nrow = 2, align = "v",
+                     legend = "right")
+pops.gg
+```
+
+# Evaluate more complex structures of random effects
+```{r}
+# Trends grouped by pure versus hybrid crosses
+model3.0 <- glmer(successful ~ 1
+                     + (temp.t + I(temp.t^2))*life_stage*species #SPECIES IS CROSS
+                     + ((temp.t + I(temp.t^2))||cross) #CROSS IS POP (SORT OF)
+                     + (1|blB)
+                     + (1|vial)
+                     , data = success.binary
+                     , family = binomial(link = "logit")
+                     , control = glmerControl(optimizer = "bobyqa", optCtrl = list(maxfun = 2e8)))
+summary(model3.0)
+
+# Create dummy numeric variable for cross2 (pure/hybrid) (so that I can suppress estimation of covariances)
+success.binary$cross2 <- as.character(success.binary$cross2)
+success.binary$cross2[success.binary$cross2 == "pure"] <- 1
+success.binary$cross2[success.binary$cross2 == "hybrid"] <- 2
+success.binary$cross2 <- as.numeric(success.binary$cross2)
+str(success.binary$cross2)
+
+model3 <- glmer(successful ~ 1
+                     + (temp.t + I(temp.t^2))*life_stage*species #SPECIES IS CROSS
+                     + ((temp.t + I(temp.t^2))*cross2||cross) #CROSS IS POP (SORT OF)
+                     + (1|blB)
+                     + (1|vial)
+                     , data = success.binary
+                     , family = binomial(link = "logit")
+                     , control = glmerControl(optimizer = "bobyqa", optCtrl = list(maxfun = 2e8)))
+summary(model3)
+
+anova(model3.0, model3) # Chisq = 6.33; Df = 3; P = 0.09
+
+
+# Filter data for pure species only and create dummy numeric variable for species
+success.binary2 <- success.binary[success.binary$species == "caespitosa" | success.binary$species == "gemineoa", ]
+success.binary2$species2 <- as.character(success.binary2$species)
+success.binary2$species2[success.binary2$species2 == "caespitosa"] <- 1
+success.binary2$species2[success.binary2$species2 == "gemineoa"] <- 2
+success.binary2$species2 <- as.numeric(success.binary2$species2)
+str(success.binary2$species2)
+
+# Models with versus without random effects grouped by species
+mod0 <- glmer(successful ~ 1
+             + (temp.t + I(temp.t^2))*life_stage*species #SPECIES IS CROSS
+             + ((temp.t + I(temp.t^2))||cross) #CROSS IS POP (SORT OF) #species2 is a numeric dummy variable (1 = caespitosa, 2 = gemineoa)
+             + (1|blB)
+             + (1|vial)
+             #+ (1|ID)
+             , data = success.binary2
+             , family = binomial(link = "logit")
+             , control = glmerControl(optimizer = "bobyqa", optCtrl = list(maxfun = 2e8)))
+summary(mod0)
+
+mod <- glmer(successful ~ 1
+                   + (temp.t + I(temp.t^2))*life_stage*species #SPECIES IS CROSS
+                   + ((temp.t + I(temp.t^2))*species2||cross) #CROSS IS POP (SORT OF) #species2 is a numeric dummy variable (1 = caespitosa, 2 = gemineoa)
+                   + (1|blB)
+                   + (1|vial)
+                   #+ (1|ID)
+                   , data = success.binary2
+                   , family = binomial(link = "logit")
+                   , control = glmerControl(optimizer = "bobyqa", optCtrl = list(maxfun = 2e8)))
+summary(mod)
+
+anova(mod0, mod) # Chisq = 0.0074; Df = 3; P = 0.9998
+
+# Models with versus without random trends
+mod00 <- glmer(successful ~ 1
+              + (temp.t + I(temp.t^2))*life_stage*species #SPECIES IS CROSS
+              + (1|cross) #CROSS IS POP (SORT OF) #species2 is a numeric dummy variable (1 = caespitosa, 2 = gemineoa)
+              + (1|blB)
+              + (1|vial)
+              #+ (1|ID)
+              , data = success.binary2
+              , family = binomial(link = "logit")
+              , control = glmerControl(optimizer = "bobyqa", optCtrl = list(maxfun = 2e8)))
+summary(mod00)
+
+anova(mod00, mod0) # Chisq = 0.0073; Df = 2; P = 0.9964
+
+# Models with versus without random intercepts
+mod000 <- glmer(successful ~ 1
+               + (temp.t + I(temp.t^2))*life_stage*species #SPECIES IS CROSS
+               + (1|blB)
+               + (1|vial)
+               #+ (1|ID)
+               , data = success.binary2
+               , family = binomial(link = "logit")
+               , control = glmerControl(optimizer = "bobyqa", optCtrl = list(maxfun = 2e8)))
+summary(mod000)
+
+anova(mod000, mod00) # Chisq = 7.08; Df = 1; P = 0.007788
+```
+
+# Test for spatial autocorrelation in the residuals of a non-spatial model (with only pure crosses)
+If there is no evidence of spatial autocorrelation, then no need to account for it when modelling (as per Lionel Hertzog:  https://datascienceplus.com/spatial-regression-in-r-part-1-spamm-vs-glmmtmb/)
+```{r}
+# Add lat long to data frame
+latlong <- read.csv("latlong.csv")
+success.binary2 <- merge(success.binary, latlong, by.x = "p1fem", by.y = "pop", sort = FALSE) # this is using population of female parents to match lat long data (arbitrary)
+success.binary2[success.binary2$p1fem != success.binary2$p2mal, c("lat", "long")] <- NA # remove lat long data from hybrid crosses
+
+# Fit model to data (pure crosses only)
+pures <- success.binary2[success.binary2$species == "caespitosa" | success.binary2$species == "gemineoa", ]
+pures$species <- factor(pures$species, levels = c("caespitosa", "gemineoa"))
+pures$cross <- factor(pures$cross, levels = as.character(unique(pures$cross)))
+success.bin.fit3b.pures <- glmer(successful ~ 1
+                     + (temp.t + I(temp.t^2))*life_stage*species #SPECIES IS CROSS
+                     + (temp.t|cross) #CROSS IS POP (SORT OF)
+                     + (1|blB)
+                     + (1|vial)
+                     , data = pures
+                     , family = binomial(link = "logit")
+                     , control = glmerControl(optimizer = "bobyqa", optCtrl = list(maxfun = 2e8)))
+summary(success.bin.fit3b.pures)
+
+# Sort lat long data by location (P1-P12)
+latlong <- latlong[order(latlong$pop), ]
+
+# Test spatial autocorrelation in the residuals with Moran's I
+sims <- simulateResiduals(success.bin.fit3b.pures)
+sims <- recalculateResiduals(sims, group = pures$cross) # need to aggregate residuals by location
+testSpatialAutocorrelation(sims, x = latlong$long, y = latlong$lat, plot = FALSE)
+# p-value = 0.5398 => no evidence of spatial autocorrelation
+
+# Plot aggregated residuals in space (visual test)
+latlong$resid <- resid(sims)
+ggplot(latlong, aes(x = long, y = lat, size = resid)) +
+  geom_point() +
+  scale_size_continuous(range = c(1,10))
+# Can't spot any patterns
+
+# Non of these tests suggests spatial dependence in the data
+```
+
